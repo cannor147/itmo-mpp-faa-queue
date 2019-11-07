@@ -1,41 +1,45 @@
 package faaqueue;
 
+import kotlinx.atomicfu.*;
+
 import static faaqueue.FAAQueue.Node.NODE_SIZE;
 
 
 public class FAAQueue<T> implements Queue<T> {
     private static final Object DONE = new Object(); // Marker for the "DONE" slot state; to avoid memory leaks
 
-    private Node head; // Head pointer, similarly to the Michael-Scott queue (but the first node is _not_ sentinel)
-    private Node tail; // Tail pointer, similarly to the Michael-Scott queue
+    private AtomicRef<Node> head; // Head pointer, similarly to the Michael-Scott queue (but the first node is _not_ sentinel)
+    private AtomicRef<Node> tail; // Tail pointer, similarly to the Michael-Scott queue
 
     public FAAQueue() {
-        head = tail = new Node();
+        Node firstNode = new Node();
+        head = new AtomicRef<>(firstNode);
+        tail = new AtomicRef<>(firstNode);
     }
 
     @Override
     public void enqueue(T x) {
-        int enqIdx = this.tail.enqIdx++;
+        int enqIdx = this.tail.getValue().enqIdx++;
         if (enqIdx >= NODE_SIZE) {
             Node newTail = new Node(x);
-            this.tail.next = newTail;
-            this.tail = newTail;
+            this.tail.getValue().next = newTail;
+            this.tail.setValue(newTail);
             return;
         }
-        this.tail.data[enqIdx] = x;
+        this.tail.getValue().data[enqIdx] = x;
     }
 
     @Override
     public T dequeue() {
         while (true) {
-            if (this.head.isEmpty()) {
-                if (this.head.next == null) return null;
-                this.head = this.head.next;
+            if (this.head.getValue().isEmpty()) {
+                if (this.head.getValue().next == null) return null;
+                this.head.setValue(this.head.getValue().next);
+                continue;
             }
-            int deqIdx = this.head.deqIdx++;
-            if (deqIdx >= NODE_SIZE) continue;
-            Object res = head.data[deqIdx];
-            head.data[deqIdx] = DONE;
+            int deqIdx = this.head.getValue().deqIdx++;
+            Object res = head.getValue().data[deqIdx];
+            head.getValue().data[deqIdx] = DONE;
             return (T) res;
         }
     }
@@ -56,7 +60,7 @@ public class FAAQueue<T> implements Queue<T> {
         }
 
         private boolean isEmpty() {
-            return this.deqIdx >= this.enqIdx;
+            return this.deqIdx >= this.enqIdx || this.deqIdx >= NODE_SIZE;
         }
     }
 }
