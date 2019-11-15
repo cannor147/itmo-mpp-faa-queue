@@ -6,10 +6,10 @@ import static faaqueue.FAAQueue.Node.NODE_SIZE;
 
 
 public class FAAQueue<T> implements Queue<T> {
-    private static final Object DONE = new Object(); // Marker for the "DONE" slot state; to avoid memory leaks
+    private static final Object DONE = new Object();
 
-    private AtomicRef<Node> head; // Head pointer, similarly to the Michael-Scott queue (but the first node is _not_ sentinel)
-    private AtomicRef<Node> tail; // Tail pointer, similarly to the Michael-Scott queue
+    private AtomicRef<Node> head;
+    private AtomicRef<Node> tail;
 
     public FAAQueue() {
         Node firstNode = new Node();
@@ -19,48 +19,64 @@ public class FAAQueue<T> implements Queue<T> {
 
     @Override
     public void enqueue(T x) {
-        int enqIdx = this.tail.getValue().enqIdx++;
-        if (enqIdx >= NODE_SIZE) {
-            Node newTail = new Node(x);
-            this.tail.getValue().next = newTail;
-            this.tail.setValue(newTail);
-            return;
+        while (true) {
+            Node tail = this.tail.getValue();
+            int enqIndex = tail.enqIdx.getAndIncrement();
+            if (enqIndex >= NODE_SIZE) {
+                Node newTail = new Node(x);
+                if (tail.next.compareAndSet(null, newTail)) {
+                    this.tail.setValue(newTail);
+                    return;
+                }
+            } else if (tail.data.get(enqIndex).compareAndSet(null, x)) {
+                return;
+            }
         }
-        this.tail.getValue().data[enqIdx] = x;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public T dequeue() {
         while (true) {
-            if (this.head.getValue().isEmpty()) {
-                if (this.head.getValue().next == null) return null;
-                this.head.setValue(this.head.getValue().next);
-                continue;
+            Node head = this.head.getValue();
+            if (head.isEmpty()) {
+                Node headNext = head.next.getValue();
+                if (headNext == null) {
+                    return null;
+                } else {
+                    this.head.compareAndSet(head, headNext);
+                }
+            } else {
+                int deqIndex = head.deqIdx.getAndIncrement();
+                if (deqIndex >= NODE_SIZE) {
+                    continue;
+                }
+                Object res = head.data.get(deqIndex).getAndSet(DONE);
+                if (res == null) {
+                    continue;
+                }
+                return (T) res;
             }
-            int deqIdx = this.head.getValue().deqIdx++;
-            Object res = head.getValue().data[deqIdx];
-            head.getValue().data[deqIdx] = DONE;
-            return (T) res;
         }
     }
 
     static class Node {
-        static final int NODE_SIZE = 2; // CHANGE ME FOR BENCHMARKING ONLY
+        static final int NODE_SIZE = 2;
 
-        private Node next = null;
-        private int enqIdx = 0; // index for the next enqueue operation
-        private int deqIdx = 0; // index for the next dequeue operation
-        private final Object[] data = new Object[NODE_SIZE];
+        private AtomicRef<Node> next = new AtomicRef<>(null);
+        private AtomicInt enqIdx = new AtomicInt(0);
+        private AtomicInt deqIdx = new AtomicInt(0);
+        private final AtomicArray<Object> data = new AtomicArray<>(NODE_SIZE);
 
         Node() {}
 
         Node(Object x) {
-            this.enqIdx = 1;
-            this.data[0] = x;
+            this.enqIdx = new AtomicInt(1);
+            this.data.get(0).setValue(x);
         }
 
         private boolean isEmpty() {
-            return this.deqIdx >= this.enqIdx || this.deqIdx >= NODE_SIZE;
+            return this.deqIdx.getValue() >= this.enqIdx.getValue() || this.deqIdx.getValue() >= NODE_SIZE;
         }
     }
 }
